@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Auto Service CRM</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#111827">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<style>
+:root{--bg:#f5f7fb;--card:#fff;--text:#172033;--muted:#6b7280;--line:#e5e7eb;--blue:#2563eb;--red:#dc2626;--amber:#d97706;--green:#15803d}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text)}
+header{background:#111827;color:white;padding:18px 20px}
+header h1{margin:0;font-size:22px}header p{margin:4px 0 0;color:#cbd5e1;font-size:13px}
+nav{display:flex;gap:8px;padding:12px 16px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+nav button{border:0;border-radius:9px;padding:10px 14px;font-weight:700;background:#eef2f7;cursor:pointer}
+nav button.active{background:var(--blue);color:#fff}
+main{max-width:1100px;margin:auto;padding:18px}.view{display:none}.view.active{display:block}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}.primary,.secondary,.danger{border:0;border-radius:9px;padding:10px 13px;font-weight:700;cursor:pointer}
+.primary{background:var(--blue);color:white}.secondary{background:#e9eef5}.danger{background:#fee2e2;color:#991b1b}
+.input{width:100%;padding:10px;border:1px solid #cfd6df;border-radius:9px;background:#fff}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+.customer-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}
+.customer-head h3{margin:0}.muted{color:var(--muted);font-size:13px}
+.vehicle{margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+.vehicle-title{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:10px}
+.mini{background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:10px}
+.mini b{display:block;margin-top:3px}
+.actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
+.badge{display:inline-block;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:800}
+.good{background:#dcfce7;color:#166534}.warn{background:#fef3c7;color:#92400e}.bad{background:#fee2e2;color:#991b1b}
+.tablewrap{overflow:auto;border:1px solid var(--line);border-radius:12px;background:#fff;margin-top:10px}
+table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap;font-size:13px}th{background:#f8fafc}
+.modal{display:none;position:fixed;inset:0;background:#0008;align-items:center;justify-content:center;padding:16px;z-index:10}.modal.show{display:flex}
+.modalbox{background:#fff;border-radius:14px;padding:20px;width:min(780px,100%);max-height:90vh;overflow:auto}.formgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:11px}.field label{display:block;font-size:12px;color:var(--muted);font-weight:700;margin-bottom:4px}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.alert-card{background:#fff;border:1px solid var(--line);border-left:5px solid var(--amber);border-radius:12px;padding:14px;margin-bottom:10px}.alert-card.overdue{border-left-color:var(--red)}
+.empty{text-align:center;color:var(--muted);padding:26px}
+h2{margin:4px 0 8px}
+@media(max-width:650px){main{padding:12px}.card{padding:13px}}
+</style>
+</head>
+<body>
+<header><h1>Auto Service CRM</h1><p>Customer, vehicle, service, mileage and follow-up manager</p></header>
+<nav>
+<button class="active" data-view="records">Customer</button>
+<button data-view="alerts">Service Alerts + Follow-Ups</button>
+</nav>
+<main>
+<section id="records" class="view active">
+<h2>Customer</h2>
+<div class="toolbar">
+<button class="primary" onclick="customerVehicleForm()">+ Add Customer</button>
+<input id="search" class="input" style="max-width:340px" placeholder="Search customer, phone, VIN or vehicle" oninput="render()">
+</div>
+<div id="customerCards"></div>
+</section>
+
+<section id="alerts" class="view">
+<h2>Service Alerts + Follow-Ups</h2>
+<div class="muted">Only services that are due soon or overdue appear here.</div>
+<div id="alertList" style="margin-top:14px"></div>
+</section>
+</main>
+
+<div id="modal" class="modal"><div id="modalbox" class="modalbox"></div></div>
+
+<script>
+const KEY='auto_service_crm_v1';
+let db=JSON.parse(localStorage.getItem(KEY)||'{"customers":[],"vehicles":[],"services":[],"tires":[],"followups":[]}');
+db.followups=db.followups||[];
+const intervals={"Oil Change":3000,"Tire Rotation":6000,"Brake Service":25000,"Coolant Flush":75000};
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const C=id=>db.customers.find(x=>x.id===id);
+const V=id=>db.vehicles.find(x=>x.id===id);
+const vname=v=>v?`${v.year||''} ${v.make||''} ${v.model||''}`.trim():'';
+function save(){localStorage.setItem(KEY,JSON.stringify(db));render()}
+function lastService(v,t){return db.services.filter(s=>s.vehicleId===v.id&&s.type===t).sort((a,b)=>b.mileage-a.mileage)[0]}
+function dueMileage(v,t){
+ const last=lastService(v,t);
+ if(t==="Coolant Flush") return last?null:75000;
+ return last?Number(last.mileage)+intervals[t]:Number(v.mileage||0)+intervals[t];
+}
+function status(v,t){
+ const due=dueMileage(v,t);
+ if(due===null)return "Completed";
+ const diff=due-Number(v.mileage||0);
+ if(diff<=0)return "Overdue";
+ if(diff<=500)return "Due Soon";
+ return "OK";
+}
+function badge(s){let c=s==="Overdue"?"bad":s==="Due Soon"?"warn":"good";return `<span class="badge ${c}">${s}</span>`}
+function tireStatus(t){
+ if(!t)return "Not set";
+ if(t.treadDepth!==undefined && t.treadDepth!==null && String(t.treadDepth)!==""){
+   let n=Number(t.treadDepth);
+   if(n<=2)return "Bad";
+   if(n<=4)return "Okay";
+   if(n<=8)return "Good";
+   return "New";
+ }
+ return t.condition||"Not set";
+}
+function modal(title,body){modalbox.innerHTML=`<h2>${title}</h2>${body}<div class="modal-actions"><button class="secondary" onclick="closeModal()">Cancel</button></div>`;document.getElementById('modal').classList.add('show')}
+function closeModal(){document.getElementById('modal').classList.remove('show')}
+
+function render(){
+ const q=(document.getElementById('search')?.value||'').toLowerCase();
+ let cards='';
+ db.customers.forEach(c=>{
+   const vehicles=db.vehicles.filter(v=>v.customerId===c.id);
+   const hay=(c.name+' '+c.phone+' '+(c.notes||'')+' '+vehicles.map(v=>vname(v)+' '+(v.vin||'')).join(' ')).toLowerCase();
+   if(q && !hay.includes(q))return;
+   cards+=`<div class="card">
+     <div class="customer-head">
+       <div><h3>${c.name}</h3><div class="muted">${c.phone||''}</div>${c.notes?`<div style="margin-top:6px">${c.notes}</div>`:''}</div>
+       <div class="actions"><button class="secondary" onclick="editCustomer('${c.id}')">Edit Customer</button><button class="secondary" onclick="vehicleForm('${c.id}')">+ Vehicle</button></div>
+     </div>
+     ${vehicles.length?vehicles.map(v=>vehicleBlock(v)).join(''):'<div class="empty">No vehicle added.</div>'}
+   </div>`;
+ });
+ customerCards.innerHTML=cards||'<div class="empty">No customers found.</div>';
+
+ let alerts=[];
+ db.vehicles.forEach(v=>Object.keys(intervals).forEach(t=>{
+   let s=status(v,t);
+   if(s==="Overdue"||s==="Due Soon")alerts.push({v,t,s,due:dueMileage(v,t)});
+ }));
+ alerts.sort((a,b)=>(a.s==="Overdue"?0:1)-(b.s==="Overdue"?0:1) || a.due-b.due);
+ alertList.innerHTML=alerts.length?alerts.map(a=>{
+   let c=C(a.v.customerId);
+   let f=db.followups.find(x=>x.vehicleId===a.v.id&&x.service===a.t);
+   return `<div class="alert-card ${a.s==="Overdue"?'overdue':''}">
+     <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+       <div><b>${c?.name||''} — ${vname(a.v)}</b><div class="muted">${c?.phone||''}</div></div>
+       ${badge(a.s)}
+     </div>
+     <div class="grid">
+       <div class="mini"><span class="muted">Service</span><b>${a.t}</b></div>
+       <div class="mini"><span class="muted">Current Mileage</span><b>${Number(a.v.mileage||0).toLocaleString()}</b></div>
+       <div class="mini"><span class="muted">Due Mileage</span><b>${Number(a.due||0).toLocaleString()}</b></div>
+       <div class="mini"><span class="muted">Last Follow-Up</span><b>${f?.date||'Not contacted'}</b></div>
+     </div>
+     ${f?.notes?`<div style="margin-top:8px"><b>Follow-up note:</b> ${f.notes}</div>`:''}
+     <div class="actions"><button class="primary" onclick="followupForm('${a.v.id}','${a.t}')">Record Follow-Up</button><button class="secondary" onclick="serviceForm('${a.v.id}','${a.t}')">Record Service</button></div>
+   </div>`;
+ }).join(''):'<div class="empty">No due-soon or overdue services right now.</div>';
+}
+function vehicleBlock(v){
+ const services=db.services.filter(s=>s.vehicleId===v.id).sort((a,b)=>b.date.localeCompare(a.date));
+ const tires=db.tires.filter(t=>t.vehicleId===v.id);
+ return `<div class="vehicle">
+   <div class="vehicle-title"><div><b>${vname(v)}</b><div class="muted">VIN: ${v.vin||'—'}</div></div><div><b>${Number(v.mileage||0).toLocaleString()} mi</b></div></div>
+   <div class="grid">
+     ${Object.keys(intervals).map(t=>`<div class="mini"><span class="muted">${t}</span><b>${status(v,t)==="OK"?(dueMileage(v,t)?.toLocaleString()+' mi'):status(v,t)}</b></div>`).join('')}
+     <div class="mini"><span class="muted">Tires</span><b>${tires.length?`${tires.length} tire record${tires.length===1?"":"s"}`:"Not set"}</b>${tires.length?`<div class="muted">${tires.map(t=>`${t.location||"Unspecified"}: ${t.treadDepth!==undefined&&t.treadDepth!==null&&String(t.treadDepth)!==""?`${t.treadDepth}/32"`:t.condition||"Not set"}`).join(" • ")}</div>`:""}</div>
+   </div>
+   <div class="actions">
+     <button class="secondary" onclick="mileageForm('${v.id}')">Update Mileage</button>
+     <button class="primary" onclick="serviceForm('${v.id}')">Record Service</button>
+     <button class="secondary" onclick="tireForm('${v.id}')">Manage Tires</button>
+   </div>
+   ${services.length?`<div class="tablewrap"><table><tr><th>Date</th><th>Service</th><th>Mileage</th></tr>${services.slice(0,6).map(s=>`<tr><td>${s.date}</td><td>${s.type}</td><td>${Number(s.mileage).toLocaleString()}</td></tr>`).join('')}</table></div>`:''}
+ </div>`;
+}
+function customerVehicleForm(){
+ modal("Add Customer",`<form onsubmit="addCustomerVehicle(event)">
+ <h3>Customer</h3><div class="formgrid">
+ <div class="field"><label>Name</label><input id="cv_name" class="input" required></div>
+ <div class="field"><label>Phone</label><input id="cv_phone" class="input" required></div>
+ <div class="field" style="grid-column:1/-1"><label>Notes</label><textarea id="cv_notes" class="input" rows="3"></textarea></div></div>
+ <h3>Vehicle</h3><div class="formgrid">
+ <div class="field"><label>Year</label><input id="cv_year" class="input"></div>
+ <div class="field"><label>Make</label><input id="cv_make" class="input" required></div>
+ <div class="field"><label>Model</label><input id="cv_model" class="input" required></div>
+ <div class="field"><label>VIN</label><input id="cv_vin" class="input"></div>
+ <div class="field"><label>Current Mileage</label><input id="cv_mileage" type="number" min="0" class="input" required></div></div>
+ <div class="modal-actions"><button class="primary">Save</button></div></form>`)
+}
+function addCustomerVehicle(e){e.preventDefault();let cid=uid();db.customers.push({id:cid,name:cv_name.value.trim(),phone:cv_phone.value.trim(),notes:cv_notes.value.trim()});db.vehicles.push({id:uid(),customerId:cid,year:cv_year.value,make:cv_make.value,model:cv_model.value,vin:cv_vin.value,mileage:Number(cv_mileage.value||0)});closeModal();save()}
+function editCustomer(cid){let c=C(cid);modal("Edit Customer",`<form onsubmit="saveCustomerEdit(event,'${cid}')"><div class="formgrid"><div class="field"><label>Name</label><input id="ec_name" class="input" value="${c.name||''}" required></div><div class="field"><label>Phone</label><input id="ec_phone" class="input" value="${c.phone||''}" required></div><div class="field" style="grid-column:1/-1"><label>Notes</label><textarea id="ec_notes" class="input" rows="4">${c.notes||''}</textarea></div></div><div class="modal-actions"><button class="primary">Save</button></div></form>`)}
+function saveCustomerEdit(e,cid){e.preventDefault();let c=C(cid);c.name=ec_name.value;c.phone=ec_phone.value;c.notes=ec_notes.value;closeModal();save()}
+function vehicleForm(cid){modal("Add Vehicle",`<form onsubmit="addVehicle(event,'${cid}')"><div class="formgrid"><div class="field"><label>Year</label><input id="av_year" class="input"></div><div class="field"><label>Make</label><input id="av_make" class="input" required></div><div class="field"><label>Model</label><input id="av_model" class="input" required></div><div class="field"><label>VIN</label><input id="av_vin" class="input"></div><div class="field"><label>Current Mileage</label><input id="av_mileage" type="number" min="0" class="input" required></div></div><div class="modal-actions"><button class="primary">Save</button></div></form>`)}
+function addVehicle(e,cid){e.preventDefault();db.vehicles.push({id:uid(),customerId:cid,year:av_year.value,make:av_make.value,model:av_model.value,vin:av_vin.value,mileage:Number(av_mileage.value||0)});closeModal();save()}
+function mileageForm(vid){let v=V(vid);modal("Update Mileage",`<form onsubmit="saveMileage(event,'${vid}')"><div class="field"><label>Current Mileage</label><input id="um" type="number" min="0" class="input" value="${v.mileage||0}" required></div><div class="modal-actions"><button class="primary">Update</button></div></form>`)}
+function saveMileage(e,vid){e.preventDefault();V(vid).mileage=Number(um.value||0);closeModal();save()}
+function serviceForm(vid,preset=''){let v=V(vid);modal("Record Service",`<form onsubmit="saveService(event,'${vid}')"><div class="formgrid"><div class="field"><label>Service</label><select id="stype" class="input">${Object.keys(intervals).map(t=>`<option ${t===preset?'selected':''}>${t}</option>`).join('')}</select></div><div class="field"><label>Date</label><input id="sdate" type="date" class="input" value="${new Date().toISOString().slice(0,10)}" required></div><div class="field"><label>Mileage</label><input id="smileage" type="number" min="0" class="input" value="${v.mileage||0}" required></div></div><div class="modal-actions"><button class="primary">Save Service</button></div></form>`)}
+function saveService(e,vid){e.preventDefault();let m=Number(smileage.value||0);db.services.push({id:uid(),vehicleId:vid,type:stype.value,date:sdate.value,mileage:m});if(m>Number(V(vid).mileage||0))V(vid).mileage=m;closeModal();save()}
+function tireForm(vid){
+ let tires=db.tires.filter(x=>x.vehicleId===vid);
+ let rows=tires.length?tires.map(t=>`
+   <div class="card" style="margin:10px 0;padding:12px">
+     <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+       <div>
+         <b>${t.location||'Unspecified Location'}</b>
+         <div class="muted">${t.brand||'No brand'}${t.size?` • ${t.size}`:''}</div>
+       </div>
+       <span class="badge ${tireStatus(t)==='Bad'?'bad':tireStatus(t)==='Okay'?'warn':'good'}">${t.treadDepth!==undefined&&t.treadDepth!==null&&String(t.treadDepth)!==''?`${t.treadDepth}/32" — ${tireStatus(t)}`:tireStatus(t)}</span>
+     </div>
+     ${t.notes?`<div style="margin-top:8px">${t.notes}</div>`:''}
+     <div class="actions">
+       <button type="button" class="secondary" onclick="editTire('${vid}','${t.id}')">Edit</button>
+       <button type="button" class="danger" onclick="deleteTire('${vid}','${t.id}')">Delete</button>
+     </div>
+   </div>`).join(''):'<div class="empty">No tires added yet.</div>';
+
+ modal("Manage Tires",`
+   <div>${rows}</div>
+   <div class="actions" style="margin-top:14px">
+     <button type="button" class="primary" onclick="addTireForm('${vid}')">+ Add Tire</button>
+   </div>
+ `)
+}
+function addTireForm(vid){
+ modal("Add Tire",tireEditorForm(vid,''));
+}
+function editTire(vid,tid){
+ modal("Edit Tire",tireEditorForm(vid,tid));
+}
+function tireEditorForm(vid,tid){
+ let t=tid?db.tires.find(x=>x.id===tid):{};
+ return `<form onsubmit="saveTire(event,'${vid}','${tid||''}')">
+ <div class="formgrid">
+   <div class="field"><label>Tire Location</label>
+     <select id="tlocation" class="input" required>
+       <option value="">Select location</option>
+       ${["Front Left","Front Right","Rear Left","Rear Right","Spare"].map(x=>`<option ${x===(t.location||'')?'selected':''}>${x}</option>`).join('')}
+     </select>
+   </div>
+   <div class="field"><label>Tire Brand</label><input id="tbrand" class="input" value="${t.brand||''}" placeholder="e.g. Michelin"></div>
+   <div class="field"><label>Tire Size</label><input id="tsize" class="input" value="${t.size||''}" placeholder="e.g. 225/65R17"></div>
+   <div class="field"><label>Tread Depth (32nds)</label><input id="tdepth" type="number" step="0.5" min="0" max="20" class="input" value="${t.treadDepth??''}" placeholder="e.g. 7"></div>
+   <div class="field"><label>If tread depth is unavailable</label>
+     <select id="tcondition" class="input">
+       <option value="">Select condition</option>
+       ${["New","Good","Okay","Bad"].map(x=>`<option ${x===(t.condition||'')?'selected':''}>${x}</option>`).join('')}
+     </select>
+   </div>
+   <div class="field" style="grid-column:1/-1"><label>Notes</label><textarea id="tnotes" class="input" rows="3" placeholder="Optional tire notes">${t.notes||''}</textarea></div>
+ </div>
+ <div class="muted" style="margin-top:8px">Use tread depth when available. Otherwise select New, Good, Okay, or Bad.</div>
+ <div class="modal-actions"><button class="primary">Save Tire</button></div>
+ </form>`;
+}
+function saveTire(e,vid,tid){
+ e.preventDefault();
+ let depth=document.getElementById("tdepth").value;
+ let condition=document.getElementById("tcondition").value;
+ if(depth==="" && condition===""){
+   alert("Enter a tread depth or choose a tire condition.");
+   return;
+ }
+ let obj={
+   id:tid||uid(),
+   vehicleId:vid,
+   location:document.getElementById("tlocation").value,
+   brand:document.getElementById("tbrand").value.trim(),
+   size:document.getElementById("tsize").value.trim(),
+   treadDepth:depth,
+   condition:depth!==""?"":condition,
+   notes:document.getElementById("tnotes").value.trim(),
+   date:new Date().toISOString().slice(0,10)
+ };
+ if(tid){
+   db.tires=db.tires.map(x=>x.id===tid?obj:x);
+ }else{
+   db.tires.push(obj);
+ }
+ save();
+ tireForm(vid);
+}
+function deleteTire(vid,tid){
+ if(!confirm("Delete this tire record?"))return;
+ db.tires=db.tires.filter(x=>x.id!==tid);
+ save();
+ tireForm(vid);
+}
+function followupForm(vid,service){let f=db.followups.find(x=>x.vehicleId===vid&&x.service===service)||{};modal("Record Follow-Up",`<form onsubmit="saveFollowup(event,'${vid}','${service}')"><div class="formgrid"><div class="field"><label>Date Contacted</label><input id="fdate" type="date" class="input" value="${new Date().toISOString().slice(0,10)}" required></div><div class="field" style="grid-column:1/-1"><label>Follow-Up Notes</label><textarea id="fnotes" class="input" rows="4" placeholder="Called customer, left voicemail, appointment scheduled, etc.">${f.notes||''}</textarea></div></div><div class="modal-actions"><button class="primary">Save Follow-Up</button></div></form>`)}
+function saveFollowup(e,vid,service){e.preventDefault();db.followups=db.followups.filter(x=>!(x.vehicleId===vid&&x.service===service));db.followups.push({id:uid(),vehicleId:vid,service:service,date:fdate.value,notes:fnotes.value});closeModal();save()}
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));document.getElementById(b.dataset.view).classList.add('active')});
+document.getElementById('modal').onclick=e=>{if(e.target.id==='modal')closeModal()};
+render();
+</script>
+
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function() {
+    navigator.serviceWorker.register('./service-worker.js').catch(function(err) {
+      console.error('Service worker registration failed:', err);
+    });
+  });
+}
+</script>
+
+</body></html>
