@@ -106,6 +106,14 @@ function tireStatus(t){
 function modal(title,body){modalbox.innerHTML=`<h2>${title}</h2>${body}<div class="modal-actions"><button class="secondary" onclick="closeModal()">Cancel</button></div>`;document.getElementById('modal').classList.add('show')}
 function closeModal(){document.getElementById('modal').classList.remove('show')}
 
+const expandedCustomers = new Set();
+function toggleCustomerDetails(id,button){
+ const open=!expandedCustomers.has(id);
+ if(open)expandedCustomers.add(id);else expandedCustomers.delete(id);
+ button.setAttribute('aria-expanded',String(open));
+ button.textContent=open?'Hide Details':'View Details';
+ document.getElementById(button.getAttribute('aria-controls')).hidden=!open;
+}
 function render(){
  const q=(document.getElementById('search')?.value||'').toLowerCase();
  let cards='';
@@ -116,9 +124,11 @@ function render(){
    cards+=`<div class="card">
      <div class="customer-head">
        <div><h3>${c.name}</h3><div class="muted">${c.phone||''}</div>${c.notes?`<div style="margin-top:6px">${c.notes}</div>`:''}</div>
-       <div class="actions"><button class="secondary" onclick="editCustomer('${c.id}')">Edit Customer</button><button class="secondary" onclick="vehicleForm('${c.id}')">+ Vehicle</button></div>
+       <div class="actions"><button class="secondary" aria-expanded="${expandedCustomers.has(c.id)}" aria-controls="customer-details-${c.id}" onclick="toggleCustomerDetails('${c.id}',this)">${expandedCustomers.has(c.id)?'Hide Details':'View Details'}</button><button class="secondary" onclick="editCustomer('${c.id}')">Edit Customer</button><button class="secondary" onclick="vehicleForm('${c.id}')">+ Vehicle</button></div>
      </div>
+     <div id="customer-details-${c.id}" ${expandedCustomers.has(c.id)?'':'hidden'}>
      ${vehicles.length?vehicles.map(v=>vehicleBlock(v)).join(''):'<div class="empty">No vehicle added.</div>'}
+     </div>
    </div>`;
  });
  customerCards.innerHTML=cards||'<div class="empty">No customers found.</div>';
